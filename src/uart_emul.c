@@ -90,6 +90,7 @@ struct fifo {
 struct ttyfd {
 	bool	opened;
 	int	fd;		/* tty device file descriptor */
+	char *name; /* slave pty name when using autopty*/
 	struct termios tio_orig, tio_new;    /* I/O Terminals */
 };
 
@@ -330,11 +331,11 @@ uart_drain(int fd, enum ev_type ev, void *arg)
 	struct uart_softc *sc;
 	int ch;
 
-	sc = arg;	
+	sc = arg;
 
 	assert(fd == sc->tty.fd);
 	assert(ev == EVF_READ);
-	
+
 	/*
 	 * This routine is called in the context of the mevent thread
 	 * to take out the softc lock to protect against concurrent
@@ -362,39 +363,37 @@ uart_write(struct uart_softc *sc, int offset, uint8_t value)
 	uint8_t msr;
 
 	pthread_mutex_lock(&sc->mtx);
-	
-	/*
-	 * Take care of the special case DLAB accesses first
-	 */
-	if ((sc->lcr & LCR_DLAB) != 0) {
-		if (offset == REG_DLL) {
-			sc->dll = value;
-			goto done;
-		}
-		
+  /*
+    * Take care of the special case DLAB accesses first
+    */
+  if ((sc->lcr & LCR_DLAB) != 0) {
+          if (offset == REG_DLL) {
+                  sc->dll = value;
+                  goto done;
+          }
 		if (offset == REG_DLH) {
 			sc->dlh = value;
 			goto done;
 		}
 	}
 
-        switch (offset) {
-	case REG_DATA:
-		if (sc->mcr & MCR_LOOPBACK) {
-			if (rxfifo_putchar(sc, value) != 0)
-				sc->lsr |= LSR_OE;
-		} else if (sc->tty.opened) {
-			ttywrite(&sc->tty, value);
-		} /* else drop on floor */
-		sc->thre_int_pending = true;
-		break;
-	case REG_IER:
-		/*
-		 * Apply mask so that bits 4-7 are 0
-		 * Also enables bits 0-3 only if they're 1
-		 */
-		sc->ier = value & 0x0F;
-		break;
+	switch (offset) {
+		case REG_DATA:
+			if (sc->mcr & MCR_LOOPBACK) {
+				if (rxfifo_putchar(sc, value) != 0)
+					sc->lsr |= LSR_OE;
+			} else if (sc->tty.opened) {
+				ttywrite(&sc->tty, value);
+			} /* else drop on floor */
+			sc->thre_int_pending = true;
+			break;
+		case REG_IER:
+			/*
+			* Apply mask so that bits 4-7 are 0
+			* Also enables bits 0-3 only if they're 1
+			*/
+			sc->ier = value & 0x0F;
+			break;
 		case REG_FCR:
 			/*
 			 * When moving from FIFO and 16450 mode and vice versa,
@@ -501,7 +500,7 @@ uart_read(struct uart_softc *sc, int offset)
 			reg = sc->dll;
 			goto done;
 		}
-		
+
 		if (offset == REG_DLH) {
 			reg = sc->dlh;
 			goto done;
@@ -519,7 +518,7 @@ uart_read(struct uart_softc *sc, int offset)
 		iir = (sc->fcr & FCR_ENABLE) ? IIR_FIFO_MASK : 0;
 
 		intr_reason = (uint8_t) uart_intr_reason(sc);
-			
+
 		/*
 		 * Deal with side effects of reading the IIR register
 		 */
@@ -623,7 +622,7 @@ uart_tty_backend(struct uart_softc *sc, const char *opts)
 		sc->tty.opened = true;
 		retval = 0;
 	}
-	    
+
 	return (retval);
 }
 
@@ -631,19 +630,45 @@ int
 uart_set_backend(struct uart_softc *sc, const char *opts)
 {
 	int retval;
+	int ptyfd;
+	char *ptyname;
 
 	retval = -1;
 
 	if (opts == NULL)
 		return (0);
 
-	if (strcmp("stdio", opts) == 0) {
-		if (!uart_stdio) {
-			sc->tty.fd = STDIN_FILENO;
-			sc->tty.opened = true;
-			uart_stdio = true;
-			retval = 0;
+	if (strcmp("stdio", opts) == 0 && !uart_stdio) {
+		sc->tty.fd = STDIN_FILENO;
+		sc->tty.opened = true;
+		uart_stdio = true;
+		retval = fcntl(sc->tty.fd, F_SETFL, O_NONBLOCK);
+	} else if (strcmp("autopty", opts) == 0) {
+		if ((ptyfd = open("/dev/ptmx", O_RDWR | O_NONBLOCK)) == -1) {
+			fprintf(stderr, "error opening /dev/ptmx char device");
+			return retval;
 		}
+
+		if ((ptyname = ptsname(ptyfd)) == NULL) {
+			perror("ptsname: error getting name for slave pseudo terminal");
+			return retval;
+		}
+
+		if ((retval = grantpt(ptyfd)) == -1) {
+			perror("error setting up ownership and permissions on slave pseudo terminal");
+			return retval;
+		}
+
+		if ((retval = unlockpt(ptyfd)) == -1) {
+			perror("error unlocking slave pseudo terminal, to allow its usage");
+			return retval;
+		}
+
+		fprintf(stdout, "Hook up a terminal emulator to %s in order to access your VM\n", ptyname);
+		sc->tty.fd = ptyfd;
+		sc->tty.name = ptyname;
+		sc->tty.opened = true;
+		retval = 0;
 	} else if (uart_tty_backend(sc, opts) == 0) {
 		retval = 0;
 	}
