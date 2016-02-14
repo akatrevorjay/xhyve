@@ -76,6 +76,7 @@ typedef int (*vmexit_handler_t)(struct vm_exit *, int *vcpu);
 extern int vmexit_task_switch(struct vm_exit *, int *vcpu);
 
 char *vmname = "vm";
+bool exit_mevent_dispatch_loop = FALSE;
 
 int guest_ncpus;
 int print_mac;
@@ -156,7 +157,7 @@ usage(int code)
 __attribute__ ((noreturn)) static void
 show_version()
 {
-        fprintf(stderr, "%s: %s\n\n%s\n",progname, VERSION,
+        fprintf(stderr, "%s: %s\n\n%s\n",progname, "VERSION",
 		"xhyve is a port of FreeBSD's bhyve hypervisor to OS X that\n"
 		"works entirely in userspace and has no other dependencies.\n\n"
 		"Homepage: https://github.com/mist64/xhyve\n"
@@ -265,8 +266,6 @@ vcpu_thread(void *param)
 
 	vcpu_loop(vcpu, vmexit[vcpu].rip);
 
-	/* not reached */
-	exit(1);
 	return (NULL);
 }
 
@@ -521,16 +520,21 @@ vmexit_suspend(struct vm_exit *vme, int *pvcpu)
 
 	switch ((int) (how)) {
 	case VM_SUSPEND_RESET:
-		exit(0);
+		go_callback_exit(0);
+		return 0;
 	case VM_SUSPEND_POWEROFF:
-		exit(1);
+		go_callback_exit(1);
+		return 1;
 	case VM_SUSPEND_HALT:
-		exit(2);
+		go_callback_exit(2);
+		return 2;
 	case VM_SUSPEND_TRIPLEFAULT:
-		exit(3);
+		go_callback_exit(3);
+		return 3;
 	default:
 		fprintf(stderr, "vmexit_suspend: invalid reason %d\n", how);
-		exit(100);
+		go_callback_exit(100);
+		return 100;
 	}
 }
 
@@ -617,18 +621,22 @@ vcpu_loop(int vcpu, uint64_t startrip)
 			exit(1);
 		}
 
-                rc = (*handler[exitcode])(&vmexit[vcpu], &vcpu);
+		rc = (*handler[exitcode])(&vmexit[vcpu], &vcpu);
 
 		switch (rc) {
 		case VMEXIT_CONTINUE:
 			break;
 		case VMEXIT_ABORT:
 			abort();
+		case VM_SUSPEND_HALT:
+		case VM_SUSPEND_POWEROFF:
+		case VM_SUSPEND_RESET:
+			break;
 		default:
+			fprintf(stderr, "vm_run error %d, errno %d\n", error, errno);
 			exit(1);
 		}
 	}
-	fprintf(stderr, "vm_run error %d, errno %d\n", error, errno);
 }
 
 static int
@@ -776,7 +784,7 @@ fail:
 }
 
 int
-main(int argc, char *argv[])
+run_xhyve(int argc, char* argv[])
 {
 	int c, error, gdb_port, bvmcons, fw;
 	int dump_guest_memory, max_vcpus, mptgen;
@@ -951,7 +959,7 @@ main(int argc, char *argv[])
 	/*
 	 * Head off to the main event dispatch loop
 	 */
-	mevent_dispatch();
+	error = mevent_dispatch();
 
-	exit(1);
+	return error;
 }

@@ -26,6 +26,9 @@ ENV := \
 # CFLAGS                                                                      #
 ###############################################################################
 
+#ARCH := $(uname -m)
+ARCH := x86_64
+
 CFLAGS_OPT := \
   -Os \
   -flto \
@@ -53,7 +56,7 @@ CFLAGS_LIB9P := \
   -Wno-format-nonliteral
 
 CFLAGS := \
-  -arch x86_64 \
+  -arch $(ARCH) \
   -x c \
   -std=c11 \
   -fno-common \
@@ -72,7 +75,7 @@ LDFLAGS_DBG := \
   -Xlinker -object_path_lto
 
 LDFLAGS := \
-  -arch x86_64 \
+  -arch $(ARCH) \
   -framework Hypervisor \
   -framework vmnet \
   $(LDFLAGS_DBG)

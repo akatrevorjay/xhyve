@@ -43,5 +43,5 @@ int mevent_enable(struct mevent *evp);
 int mevent_disable(struct mevent *evp);
 int mevent_delete(struct mevent *evp);
 int mevent_delete_close(struct mevent *evp);
-
-void mevent_dispatch(void);
+int mevent_dispatch(void);
+void mevent_exit(void);

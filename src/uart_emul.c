@@ -667,6 +667,10 @@ uart_set_backend(struct uart_softc *sc, const char *backend, const char *devname
 		}
 
 		fprintf(stdout, "%s connected to %s\n", devname, ptyname);
+
+		// Sends to Go land the device path name for the slave pseudo-terminal.
+		go_set_pty_name(ptyname);
+
 		sc->tty.fd = ptyfd;
 		sc->tty.name = ptyname;
 		sc->tty.opened = true;
