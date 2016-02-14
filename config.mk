@@ -39,7 +39,8 @@ CFLAGS_WARN := \
   -Werror \
   -Wno-unknown-warning-option \
   -Wno-reserved-id-macro \
-  -pedantic
+  -pedantic \
+	-Wno-error
 
 CFLAGS_DIAG := \
   -fmessage-length=152 \
